@@ -110,8 +110,8 @@ func (e *Echo) SendEcho(address [4]byte) error {
 		Identification:     0,
 		FlagsFragment:      0x4000, // df = 1
 		TTL:                64,
-		Protocol:           1,                     // icmp
-		SourceAddress:      [4]byte{127, 0, 0, 1}, // 사용시 수정해야함
+		Protocol:           1,                    // icmp
+		SourceAddress:      [4]byte{10, 0, 0, 2}, // 사용시 수정해야함
 		DestinationAddress: address,
 	}
 	buf := ih.BuildHeader()

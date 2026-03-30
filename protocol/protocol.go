@@ -6,20 +6,28 @@ import (
 	"log"
 	"math/rand"
 	"study/icmp"
-	"study/ip"
 	"syscall"
 )
 
 const (
-	HandshakeReq = 0
-	HandshakeRp  = 1
+	handshakeRequest  = 0
+	handshakeResponse = 1
 
-	DataReq = 2
-	DataRp  = 3
+	dataRequest  = 2
+	dataResponse = 3
 )
 
-func ReadData(address [4]byte, identify uint16, size uint16) {
+func openSocket() (int, error) {
 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	if err != nil {
+		return s, fmt.Errorf("socket error: %w", err)
+	}
+
+	return s, nil
+}
+
+func ReadData(address [4]byte, identify uint16, size uint16) {
+	s, err := openSocket()
 	if err != nil {
 		log.Printf("socket error: %s\n", err.Error())
 		return
@@ -29,13 +37,13 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 	maxSequence := (int(size)+255)/256 - 1
 	buf := make([]byte, size)
 	for {
-		e, err := icmp.ReadEcho(s, identify)
+		e, err := icmp.ReadEchoIdentifier(s, identify)
 		if err != nil {
 			log.Printf("read echo error: %s\n", err.Error())
 			return
 		} else if len(e.Data) < 2 {
 			continue
-		} else if e.Data[0] != DataReq {
+		} else if e.Data[0] != dataRequest {
 			continue
 		}
 
@@ -43,7 +51,7 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 
 		// 데이터 전송 응답
 		reply := make([]byte, 3)
-		reply[0] = DataRp
+		reply[0] = dataResponse
 		binary.BigEndian.PutUint16(reply[1:], uint16(len(e.Data[1:])))
 
 		er := &icmp.Echo{
@@ -72,30 +80,10 @@ func Listen() error {
 	}
 	defer syscall.Close(s)
 
-	buf := make([]byte, 1500)
 	for {
-		n, _, err := syscall.Recvfrom(s, buf, 0)
+		ih, e, err := icmp.ReadEcho(s)
 		if err != nil {
-			return fmt.Errorf("read echo error: %w", err)
-		}
-		buf = buf[:n]
-
-		ih, err := ip.DecodeHeader(buf)
-		if err != nil {
-			return fmt.Errorf("decode ip header error: %w", err)
-		}
-
-		h, err := icmp.DecodeHeader(buf)
-		if err != nil {
-			return fmt.Errorf("decode icmp header error: %w", err)
-		} else if h.Type != 8 {
-			continue
-		}
-
-		e, err := icmp.DecodeEcho(buf)
-		if err != nil {
-			return fmt.Errorf("decode echo error: %w", err)
-		} else if len(e.Data) < 3 {
+			log.Printf("icmp echo read error: %s", err.Error())
 			continue
 		}
 
@@ -132,7 +120,7 @@ func Send(address [4]byte, data []byte) error {
 	defer syscall.Close(s)
 
 	buf := make([]byte, 3)
-	buf[0] = HandshakeReq
+	buf[0] = handshakeRequest
 	binary.BigEndian.PutUint16(buf[1:], uint16(len(data)))
 
 	e := &icmp.Echo{
@@ -145,12 +133,12 @@ func Send(address [4]byte, data []byte) error {
 		return fmt.Errorf("send error: %w", err)
 	}
 
-	echo, err := icmp.ReadEcho(s, identifier)
+	echo, err := icmp.ReadEchoIdentifier(s, identifier)
 	if err != nil {
 		return fmt.Errorf("read echo error: %w", err)
 	} else if len(echo.Data) < 3 {
 		return fmt.Errorf("handshake reply error: %d", len(echo.Data))
-	} else if echo.Data[0] != HandshakeRp {
+	} else if echo.Data[0] != handshakeResponse {
 		return fmt.Errorf("is not handshake reply type: %d", echo.Data[0])
 	}
 
@@ -164,7 +152,7 @@ func Send(address [4]byte, data []byte) error {
 		}
 
 		buf := make([]byte, 1+(end-i))
-		buf[0] = DataReq
+		buf[0] = dataRequest
 		copy(buf[1:], data[i:end])
 
 		for {
@@ -178,12 +166,12 @@ func Send(address [4]byte, data []byte) error {
 				return fmt.Errorf("send error: %w", err)
 			}
 
-			echo, err := icmp.ReadEcho(s, identifier)
+			echo, err := icmp.ReadEchoIdentifier(s, identifier)
 			if err != nil {
 				return fmt.Errorf("read echo error: %w", err)
 			} else if len(echo.Data) < 3 {
 				return fmt.Errorf("data reply error: %d", len(echo.Data))
-			} else if echo.Data[0] != DataRp {
+			} else if echo.Data[0] != dataResponse {
 				return fmt.Errorf("is not data reply type: %d", echo.Data[0])
 			} else if echo.Sequence != uint16(sequence) {
 				continue

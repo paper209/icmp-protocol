@@ -9,6 +9,7 @@ import (
 	"syscall"
 )
 
+// 타입
 const (
 	handshakeRequest  = 0
 	handshakeResponse = 1
@@ -16,6 +17,8 @@ const (
 	dataRequest  = 2
 	dataResponse = 3
 )
+
+const maxSize = 2
 
 func openSocket() (int, error) {
 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
@@ -34,7 +37,7 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 	}
 	defer syscall.Close(s)
 
-	maxSequence := (int(size)+255)/256 - 1
+	maxSequence := (int(size)+(maxSize-1))/maxSize - 1
 	buf := make([]byte, size)
 	for {
 		e, err := icmp.ReadEchoIdentifier(s, identify)
@@ -47,7 +50,7 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 			continue
 		}
 
-		copy(buf[e.Sequence*256:], e.Data[1:])
+		copy(buf[e.Sequence*maxSize:], e.Data[1:])
 
 		// 데이터 전송 응답
 		reply := make([]byte, 3)
@@ -93,7 +96,7 @@ func Listen() error {
 			// 응답
 			buf := make([]byte, 3)
 			buf[0] = 1
-			binary.BigEndian.PutUint16(buf[1:], 256) // 최대 크기
+			binary.BigEndian.PutUint16(buf[1:], maxSize) // 최대 크기
 
 			e := &icmp.Echo{
 				Identifier: e.Identifier,
@@ -155,7 +158,7 @@ func Send(address [4]byte, data []byte) error {
 		buf[0] = dataRequest
 		copy(buf[1:], data[i:end])
 
-		for {
+		for retry := 0; retry < 3; retry++ {
 			e := &icmp.Echo{
 				Identifier: identifier,
 				Sequence:   uint16(sequence),

@@ -3,7 +3,7 @@ package ip
 import (
 	"encoding/binary"
 	"errors"
-	"study/checksum"
+	"study/util"
 )
 
 // total bytes = 20
@@ -15,7 +15,7 @@ type Header struct {
 	FlagsFragment      uint16
 	TTL                uint8
 	Protocol           uint8
-	Checksum           uint16
+	util               uint16
 	SourceAddress      [4]byte
 	DestinationAddress [4]byte
 }
@@ -33,7 +33,7 @@ func (h *Header) BuildHeader() []byte {
 	copy(buf[12:16], h.SourceAddress[:])
 	copy(buf[16:20], h.DestinationAddress[:])
 
-	binary.BigEndian.PutUint16(buf[10:], checksum.Checksum(buf))
+	binary.BigEndian.PutUint16(buf[10:], util.Checksum(buf))
 
 	return buf
 }
@@ -41,8 +41,8 @@ func (h *Header) BuildHeader() []byte {
 func DecodeHeader(buf []byte) (*Header, error) {
 	if len(buf) < 20 {
 		return nil, errors.New("invalid length")
-	} else if checksum.Checksum(buf[:20]) != 0 {
-		return nil, errors.New("invalid checksum")
+	} else if util.Checksum(buf[:20]) != 0 {
+		return nil, errors.New("invalid util")
 	}
 
 	return &Header{
@@ -53,7 +53,7 @@ func DecodeHeader(buf []byte) (*Header, error) {
 		FlagsFragment:      binary.BigEndian.Uint16(buf[6:8]),
 		TTL:                buf[8],
 		Protocol:           buf[9],
-		Checksum:           binary.BigEndian.Uint16(buf[10:12]),
+		util:               binary.BigEndian.Uint16(buf[10:12]),
 		SourceAddress:      [4]byte{buf[12], buf[13], buf[14], buf[15]},
 		DestinationAddress: [4]byte{buf[16], buf[17], buf[18], buf[19]},
 	}, nil

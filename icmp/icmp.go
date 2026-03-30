@@ -43,7 +43,7 @@ func DecodeHeader(buf []byte) (*Header, error) {
 	}, nil
 }
 
-func DecodeEcho(buf []byte) (*Echo, error) {
+func decodeEcho(buf []byte) (*Echo, error) {
 	if len(buf) < 28 {
 		return nil, errors.New("invalid length")
 	}
@@ -73,33 +73,54 @@ func (e *Echo) buildEchoRequest() []byte {
 	return buf
 }
 
-func ReadEcho(s int, identifier uint16) (e *Echo, err error) {
+func Read(s int) ([]byte, error) {
+	buf := make([]byte, 1500)
+	n, _, err := syscall.Recvfrom(s, buf, 0)
+	if err != nil {
+		return nil, fmt.Errorf("socket error: %w", err)
+	}
+	return buf[:n], nil
+}
+
+func ReadEcho(s int) (*ip.Header, *Echo, error) {
 	for {
-		buf := make([]byte, 1500)
-		n, _, err := syscall.Recvfrom(s, buf, 0)
+		buf, err := Read(s)
 		if err != nil {
-			return nil, fmt.Errorf("read echo error: %w", err)
+			return nil, nil, fmt.Errorf("read error: %w", err)
 		}
-		buf = buf[:n]
+
+		ih, err := ip.DecodeHeader(buf)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode ip header error: %w", err)
+		}
 
 		h, err := DecodeHeader(buf)
 		if err != nil {
-			return nil, fmt.Errorf("decode icmp header error: %w", err)
+			return nil, nil, fmt.Errorf("decode icmp header error: %w", err)
 		} else if h.Type != 8 {
 			continue
 		}
 
-		e, err = DecodeEcho(buf)
+		e, err := decodeEcho(buf)
 		if err != nil {
-			return nil, fmt.Errorf("decode echo error: %w", err)
+			return nil, nil, fmt.Errorf("decode echo error: %w", err)
+		}
+
+		return ih, e, nil
+	}
+}
+
+func ReadEchoIdentifier(s int, identifier uint16) (*Echo, error) {
+	for {
+		_, e, err := ReadEcho(s)
+		if err != nil {
+			return nil, fmt.Errorf("raed echo error: %w", err)
 		}
 
 		if e.Identifier == identifier {
-			break
+			return e, nil
 		}
 	}
-
-	return e, nil
 }
 
 func (e *Echo) SendEcho(address [4]byte) error {

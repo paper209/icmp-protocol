@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"study/icmp"
 	"syscall"
+	"time"
 )
 
 // 타입
@@ -45,8 +46,10 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 			log.Printf("read echo error: %s\n", err.Error())
 			return
 		} else if len(e.Data) < 2 {
+			fmt.Println(e.Data)
 			continue
 		} else if e.Data[0] != dataRequest {
+			fmt.Println(e.Data)
 			continue
 		}
 
@@ -158,6 +161,7 @@ func Send(address [4]byte, data []byte) error {
 		buf[0] = dataRequest
 		copy(buf[1:], data[i:end])
 
+		success := false
 		for retry := 0; retry < 3; retry++ {
 			e := &icmp.Echo{
 				Identifier: identifier,
@@ -182,10 +186,17 @@ func Send(address [4]byte, data []byte) error {
 				continue
 			}
 
+			success = true
 			break
 		}
 
+		if !success {
+			return fmt.Errorf("send sequence error: %d", sequence)
+		}
+
 		sequence++
+
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	return nil

@@ -51,6 +51,8 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 		} else if e.Data[0] != dataRequest {
 			fmt.Println(e.Data)
 			continue
+		} else if e.Sequence > uint16(maxSequence) { // Sequence 검증 추가
+			continue
 		}
 
 		copy(buf[e.Sequence*maxSize:], e.Data[1:])

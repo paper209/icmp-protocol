@@ -30,14 +30,7 @@ func openSocket() (int, error) {
 	return s, nil
 }
 
-func ReadData(address [4]byte, identify uint16, size uint16) {
-	s, err := openSocket()
-	if err != nil {
-		log.Printf("socket error: %s\n", err.Error())
-		return
-	}
-	defer syscall.Close(s)
-
+func ReadData(s int, address [4]byte, identify uint16, size uint16) {
 	maxSequence := (int(size)+(maxSize-1))/maxSize - 1
 	buf := make([]byte, size)
 	for {
@@ -82,7 +75,7 @@ func ReadData(address [4]byte, identify uint16, size uint16) {
 }
 
 func Listen() error {
-	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	s, err := openSocket()
 	if err != nil {
 		return fmt.Errorf("socket error: %w", err)
 	}
@@ -113,15 +106,13 @@ func Listen() error {
 				return fmt.Errorf("send echo error: %w", err)
 			}
 
-			ReadData(ih.SourceAddress, e.Identifier, size)
+			ReadData(s, ih.SourceAddress, e.Identifier, size)
 		}
 	}
 }
 
 func Send(address [4]byte, data []byte) error {
-	identifier := uint16(rand.Intn(65536))
-
-	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	s, err := openSocket()
 	if err != nil {
 		return fmt.Errorf("socket error: %w", err)
 	}
@@ -131,6 +122,7 @@ func Send(address [4]byte, data []byte) error {
 	buf[0] = handshakeRequest
 	binary.BigEndian.PutUint16(buf[1:], uint16(len(data)))
 
+	identifier := uint16(rand.Intn(65536))
 	e := &icmp.Echo{
 		Identifier: identifier,
 		Sequence:   0,

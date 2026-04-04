@@ -19,7 +19,10 @@ const (
 	dataResponse = 3
 )
 
-const maxSize = 2
+const (
+	maxSize    = 2
+	maxBufSize = 256
+)
 
 func openSocket() (int, error) {
 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
@@ -30,8 +33,19 @@ func openSocket() (int, error) {
 	return s, nil
 }
 
+func setReadTimeout(fd int, t time.Duration) error {
+	tv := syscall.NsecToTimeval(t.Nanoseconds())
+	return syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+}
+
 func ReadData(s int, address [4]byte, identify uint16, size uint16) {
+	setReadTimeout(s, 5*time.Second) // 타임아웃 설정
 	maxSequence := (int(size)+(maxSize-1))/maxSize - 1
+
+	// 버퍼 사이즈 검증 추가
+	if size > maxBufSize {
+		return
+	}
 	buf := make([]byte, size)
 	for {
 		e, err := icmp.ReadEchoIdentifier(s, identify)

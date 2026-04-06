@@ -48,7 +48,7 @@ func ReadData(s int, address [4]byte, identify uint16, size uint16) {
 	}
 	buf := make([]byte, size)
 	for {
-		e, err := icmp.ReadEchoIdentifier(s, identify)
+		e, err := icmp.ReadEchoIdentifier(s, address, identify)
 		if err != nil {
 			log.Printf("read echo error: %s\n", err.Error())
 			return
@@ -147,7 +147,7 @@ func Send(address [4]byte, data []byte) error {
 		return fmt.Errorf("send error: %w", err)
 	}
 
-	echo, err := icmp.ReadEchoIdentifier(s, identifier)
+	echo, err := icmp.ReadEchoIdentifier(s, address, identifier)
 	if err != nil {
 		return fmt.Errorf("read echo error: %w", err)
 	} else if len(echo.Data) < 3 {
@@ -181,7 +181,7 @@ func Send(address [4]byte, data []byte) error {
 				return fmt.Errorf("send error: %w", err)
 			}
 
-			echo, err := icmp.ReadEchoIdentifier(s, identifier)
+			echo, err := icmp.ReadEchoIdentifier(s, address, identifier)
 			if err != nil {
 				return fmt.Errorf("read echo error: %w", err)
 			} else if len(echo.Data) < 3 {

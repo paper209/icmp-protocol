@@ -3,151 +3,76 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math/rand"
 	"study/icmp"
+	"sync"
 	"syscall"
 	"time"
 )
 
-// 타입
-const (
-	handshakeRequest  = 0
-	handshakeResponse = 1
+type Connection struct {
+	Socket  int
+	Address [4]byte
 
-	dataRequest  = 2
-	dataResponse = 3
-)
+	Mu         sync.Mutex
+	IsClosed   bool
+	ReadBuffer []byte
+}
 
-const (
-	maxSize    = 2
-	maxBufSize = 256
-)
+func (c *Connection) isClosed() bool {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+	return c.IsClosed
+}
 
-func openSocket() (int, error) {
-	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
-	if err != nil {
-		return s, fmt.Errorf("socket error: %w", err)
+func (c *Connection) Close() error {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+
+	c.IsClosed = true
+	return syscall.Close(c.Socket)
+}
+
+func (c *Connection) Read(buf []byte) (n int, err error) {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+
+	if c.IsClosed {
+		return 0, fmt.Errorf("connection closed")
+	} else if len(c.ReadBuffer) == 0 {
+		return 0, nil
 	}
 
-	return s, nil
+	n = copy(buf, c.ReadBuffer)
+	c.ReadBuffer = c.ReadBuffer[n:]
+	return n, nil
 }
 
-func setReadTimeout(fd int, t time.Duration) error {
-	tv := syscall.NsecToTimeval(t.Nanoseconds())
-	return syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-}
-
-func ReadData(s int, address [4]byte, identify uint16, size uint16) {
+func (c *Connection) Write(data []byte) error {
+	s, err := openSocket()
+	if err != nil {
+		return err
+	}
 	setReadTimeout(s, 5*time.Second) // 타임아웃 설정
-	maxSequence := (int(size)+(maxSize-1))/maxSize - 1
-
-	// 버퍼 사이즈 검증 추가
-	if size > maxBufSize {
-		return
-	}
-	buf := make([]byte, size)
-	for {
-		e, err := icmp.ReadEchoIdentifier(s, address, identify)
-		if err != nil {
-			log.Printf("read echo error: %s\n", err.Error())
-			return
-		} else if len(e.Data) < 2 {
-			fmt.Println(e.Data)
-			continue
-		} else if e.Data[0] != dataRequest {
-			fmt.Println(e.Data)
-			continue
-		} else if e.Sequence > uint16(maxSequence) { // Sequence 검증 추가
-			continue
-		}
-
-		copy(buf[e.Sequence*maxSize:], e.Data[1:])
-
-		// 데이터 전송 응답
-		reply := make([]byte, 3)
-		reply[0] = dataResponse
-		binary.BigEndian.PutUint16(reply[1:], uint16(len(e.Data[1:])))
-
-		er := &icmp.Echo{
-			Identifier: identify,
-			Sequence:   e.Sequence,
-			Data:       reply,
-		}
-		err = er.SendEcho(address)
-		if err != nil {
-			log.Printf("send echo error: %s\n", err.Error())
-			return
-		}
-
-		if e.Sequence == uint16(maxSequence) {
-			break
-		}
-	}
-
-	fmt.Println(string(buf))
-}
-
-func Listen() error {
-	s, err := openSocket()
-	if err != nil {
-		return fmt.Errorf("socket error: %w", err)
-	}
 	defer syscall.Close(s)
 
-	for {
-		ih, e, err := icmp.ReadEcho(s)
-		if err != nil {
-			log.Printf("icmp echo read error: %s", err.Error())
-			continue
-		}
-
-		if e.Data[0] == 0 {
-			size := binary.BigEndian.Uint16(e.Data[1:])
-
-			// 응답
-			buf := make([]byte, 3)
-			buf[0] = 1
-			binary.BigEndian.PutUint16(buf[1:], maxSize) // 최대 크기
-
-			e := &icmp.Echo{
-				Identifier: e.Identifier,
-				Sequence:   e.Sequence,
-				Data:       buf,
-			}
-			err = e.SendEcho(ih.SourceAddress)
-			if err != nil {
-				return fmt.Errorf("send echo error: %w", err)
-			}
-
-			ReadData(s, ih.SourceAddress, e.Identifier, size)
-		}
-	}
-}
-
-func Send(address [4]byte, data []byte) error {
-	s, err := openSocket()
-	if err != nil {
-		return fmt.Errorf("socket error: %w", err)
-	}
-	defer syscall.Close(s)
+	identifier := uint16(rand.Intn(65536))
 
 	buf := make([]byte, 3)
 	buf[0] = handshakeRequest
 	binary.BigEndian.PutUint16(buf[1:], uint16(len(data)))
 
-	identifier := uint16(rand.Intn(65536))
 	e := &icmp.Echo{
 		Identifier: identifier,
 		Sequence:   0,
 		Data:       buf,
 	}
-	err = e.SendEcho(address)
+	err = e.SendEcho(c.Address)
 	if err != nil {
 		return fmt.Errorf("send error: %w", err)
 	}
 
-	echo, err := icmp.ReadEchoIdentifier(s, address, identifier)
+	echo, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
 	if err != nil {
 		return fmt.Errorf("read echo error: %w", err)
 	} else if len(echo.Data) < 3 {
@@ -176,12 +101,12 @@ func Send(address [4]byte, data []byte) error {
 				Sequence:   uint16(sequence),
 				Data:       buf,
 			}
-			err := e.SendEcho(address)
+			err := e.SendEcho(c.Address)
 			if err != nil {
 				return fmt.Errorf("send error: %w", err)
 			}
 
-			echo, err := icmp.ReadEchoIdentifier(s, address, identifier)
+			echo, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
 			if err != nil {
 				return fmt.Errorf("read echo error: %w", err)
 			} else if len(echo.Data) < 3 {
@@ -208,4 +133,116 @@ func Send(address [4]byte, data []byte) error {
 	}
 
 	return nil
+}
+
+func NewConnection(address [4]byte) (*Connection, error) {
+	s, err := openSocket()
+	if err != nil {
+		return nil, fmt.Errorf("socket error: %w", err)
+	}
+
+	c := &Connection{
+		Socket:   s,
+		IsClosed: false,
+
+		Address: address,
+	}
+	go c.listen()
+
+	return c, nil
+}
+
+func (c *Connection) listen() {
+	defer c.Close()
+	for {
+		if c.isClosed() {
+			return
+		}
+
+		e, err := icmp.ReadEchoAddress(c.Socket, c.Address)
+		if err != nil {
+			return
+		}
+
+		if e.Data[0] == 0 {
+			size := binary.BigEndian.Uint16(e.Data[1:])
+
+			// 응답
+			buf := make([]byte, 3)
+			buf[0] = 1
+			binary.BigEndian.PutUint16(buf[1:], maxSize) // 최대 크기
+
+			e := &icmp.Echo{
+				Identifier: e.Identifier,
+				Sequence:   e.Sequence,
+				Data:       buf,
+			}
+			err = e.SendEcho(c.Address)
+			if err != nil {
+				return
+			}
+
+			c.readData(e.Identifier, size)
+		}
+	}
+}
+
+func (c *Connection) readData(identifier uint16, size uint16) {
+	s, err := openSocket()
+	if err != nil {
+		return
+	}
+	setReadTimeout(s, 5*time.Second) // 타임아웃 설정
+	defer syscall.Close(s)
+
+	// 버퍼 사이즈 검증 추가
+	if size > maxBufSize {
+		return
+	}
+
+	buf := make([]byte, size)
+	maxSequence := (int(size)+(maxSize-1))/maxSize - 1
+	for {
+		if c.isClosed() {
+			return
+		}
+
+		e, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
+		if err != nil {
+			c.Close()
+			return
+		} else if len(e.Data) < 2 {
+			continue
+		} else if e.Data[0] != dataRequest {
+			continue
+		} else if e.Sequence > uint16(maxSequence) { // Sequence 검증 추가
+			continue
+		}
+
+		copy(buf[e.Sequence*maxSize:], e.Data[1:])
+
+		// 데이터 전송 응답
+		reply := make([]byte, 3)
+		reply[0] = dataResponse
+		binary.BigEndian.PutUint16(reply[1:], uint16(len(e.Data[1:])))
+
+		er := &icmp.Echo{
+			Identifier: identifier,
+			Sequence:   e.Sequence,
+			Data:       reply,
+		}
+		err = er.SendEcho(c.Address)
+		if err != nil {
+			c.Close()
+			return
+		}
+
+		if e.Sequence == uint16(maxSequence) {
+			break
+		}
+	}
+
+	c.Mu.Lock()
+	c.ReadBuffer = append(c.ReadBuffer, buf...)
+	c.Mu.Unlock()
 }

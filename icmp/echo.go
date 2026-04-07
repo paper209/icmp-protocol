@@ -75,6 +75,36 @@ func ReadEcho(s int) (*ip.Header, *Echo, error) {
 	}
 }
 
+func ReadEchoAddress(s int, address [4]byte) (*Echo, error) {
+	for {
+		buf, err := Read(s)
+		if err != nil {
+			return nil, fmt.Errorf("read error: %w", err)
+		}
+
+		ih, err := ip.DecodeHeader(buf)
+		if err != nil {
+			return nil, fmt.Errorf("decode ip header error: %w", err)
+		} else if ih.SourceAddress != address {
+			continue
+		}
+
+		h, err := decodeHeader(buf)
+		if err != nil {
+			return nil, fmt.Errorf("decode icmp header error: %w", err)
+		} else if h.Type != 8 {
+			continue
+		}
+
+		e, err := decodeEcho(buf)
+		if err != nil {
+			return nil, fmt.Errorf("decode echo error: %w", err)
+		}
+
+		return e, nil
+	}
+}
+
 func ReadEchoIdentifier(s int, address [4]byte, identifier uint16) (*Echo, error) {
 	for {
 		ih, e, err := ReadEcho(s)

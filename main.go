@@ -8,7 +8,7 @@ import (
 
 // src = 10.0.0.1
 func Write() {
-	c, err := protocol.NewConnection([4]byte{10, 0, 0, 2})
+	c, err := protocol.NewConnection([4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 2})
 	if err != nil {
 		panic(err)
 	}
@@ -21,7 +21,7 @@ func Write() {
 
 // src = 10.0.0.2
 func Read() {
-	c, err := protocol.NewConnection([4]byte{10, 0, 0, 1})
+	c, err := protocol.NewConnection([4]byte{10, 0, 0, 2}, [4]byte{10, 0, 0, 1})
 	if err != nil {
 		panic(err)
 	}

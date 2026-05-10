@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"study/ip"
 	"study/util"
 	"syscall"
@@ -119,14 +118,7 @@ func ReadEchoIdentifier(s int, address [4]byte, identifier uint16) (*Echo, error
 	}
 }
 
-func (e *Echo) SendEcho(address [4]byte) error {
-	src, err := util.SourceIP()
-	if err != nil {
-		return fmt.Errorf("get source ip error: %w", err)
-	}
-
-	log.Println(e.Data)
-
+func (e *Echo) SendEcho(src [4]byte, dst [4]byte) error {
 	ih := &ip.Header{
 		VersionIHL:         (4 << 4) | (5 & 0x0F),
 		Tos:                0,
@@ -136,28 +128,28 @@ func (e *Echo) SendEcho(address [4]byte) error {
 		TTL:                64,
 		Protocol:           1, // icmp
 		SourceAddress:      src,
-		DestinationAddress: address,
+		DestinationAddress: dst,
 	}
 	buf := ih.BuildHeader()
 	buf = append(buf, e.buildEchoRequest()...)
 
 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
 	if err != nil {
-		return fmt.Errorf("socket errror: %s", err.Error())
+		return fmt.Errorf("socket errror: %w", err)
 	}
 	defer syscall.Close(s)
 
 	err = syscall.SetsockoptInt(s, syscall.IPPROTO_IP, syscall.IP_HDRINCL, 1)
 	if err != nil {
-		return fmt.Errorf("socket option error: %s", err.Error())
+		return fmt.Errorf("socket option error: %w", err)
 	}
 
 	err = syscall.Sendto(s, buf, 0, &syscall.SockaddrInet4{
 		Port: 0,
-		Addr: address,
+		Addr: dst,
 	})
 	if err != nil {
-		return fmt.Errorf("socket send error: %s", err.Error())
+		return fmt.Errorf("socket send error: %w", err)
 	}
 
 	return nil

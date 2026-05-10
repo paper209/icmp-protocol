@@ -11,13 +11,27 @@ import (
 )
 
 type Connection struct {
-	Socket  int
-	Address [4]byte
+	Socket int
+	Src    [4]byte
+	Dst    [4]byte
 
 	Mu         sync.Mutex
 	IsClosed   bool
 	ReadBuffer []byte
 }
+
+const (
+	handshakeRequest  = 0
+	handshakeResponse = 1
+
+	dataRequest  = 2
+	dataResponse = 3
+)
+
+const (
+	maxSize    = 2
+	maxBufSize = 256
+)
 
 func (c *Connection) isClosed() bool {
 	c.Mu.Lock()
@@ -31,6 +45,40 @@ func (c *Connection) Close() error {
 
 	c.IsClosed = true
 	return syscall.Close(c.Socket)
+}
+
+// open socket
+func openSocket() (int, error) {
+	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	if err != nil {
+		return s, fmt.Errorf("socket error: %w", err)
+	}
+
+	return s, nil
+}
+
+// set read timeout
+func setReadTimeout(fd int, t time.Duration) error {
+	tv := syscall.NsecToTimeval(t.Nanoseconds())
+	return syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+}
+
+func NewConnection(src [4]byte, dst [4]byte) (*Connection, error) {
+	s, err := openSocket()
+	if err != nil {
+		return nil, fmt.Errorf("socket error: %w", err)
+	}
+
+	c := &Connection{
+		Socket:   s,
+		IsClosed: false,
+
+		Src: src,
+		Dst: dst,
+	}
+	go c.listen()
+
+	return c, nil
 }
 
 func (c *Connection) Read(buf []byte) (n int, err error) {
@@ -48,6 +96,7 @@ func (c *Connection) Read(buf []byte) (n int, err error) {
 	return n, nil
 }
 
+// write data
 func (c *Connection) Write(data []byte) error {
 	s, err := openSocket()
 	if err != nil {
@@ -67,12 +116,12 @@ func (c *Connection) Write(data []byte) error {
 		Sequence:   0,
 		Data:       buf,
 	}
-	err = e.SendEcho(c.Address)
+	err = e.SendEcho(c.Src, c.Dst)
 	if err != nil {
 		return fmt.Errorf("send error: %w", err)
 	}
 
-	echo, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
+	echo, err := icmp.ReadEchoIdentifier(s, c.Dst, identifier)
 	if err != nil {
 		return fmt.Errorf("read echo error: %w", err)
 	} else if len(echo.Data) < 3 {
@@ -101,12 +150,12 @@ func (c *Connection) Write(data []byte) error {
 				Sequence:   uint16(sequence),
 				Data:       buf,
 			}
-			err := e.SendEcho(c.Address)
+			err := e.SendEcho(c.Src, c.Dst)
 			if err != nil {
 				return fmt.Errorf("send error: %w", err)
 			}
 
-			echo, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
+			echo, err := icmp.ReadEchoIdentifier(s, c.Dst, identifier)
 			if err != nil {
 				return fmt.Errorf("read echo error: %w", err)
 			} else if len(echo.Data) < 3 {
@@ -135,23 +184,6 @@ func (c *Connection) Write(data []byte) error {
 	return nil
 }
 
-func NewConnection(address [4]byte) (*Connection, error) {
-	s, err := openSocket()
-	if err != nil {
-		return nil, fmt.Errorf("socket error: %w", err)
-	}
-
-	c := &Connection{
-		Socket:   s,
-		IsClosed: false,
-
-		Address: address,
-	}
-	go c.listen()
-
-	return c, nil
-}
-
 func (c *Connection) listen() {
 	defer c.Close()
 	for {
@@ -159,7 +191,7 @@ func (c *Connection) listen() {
 			return
 		}
 
-		e, err := icmp.ReadEchoAddress(c.Socket, c.Address)
+		e, err := icmp.ReadEchoAddress(c.Socket, c.Dst)
 		if err != nil {
 			return
 		}
@@ -177,7 +209,7 @@ func (c *Connection) listen() {
 				Sequence:   e.Sequence,
 				Data:       buf,
 			}
-			err = e.SendEcho(c.Address)
+			err = e.SendEcho(c.Src, c.Dst)
 			if err != nil {
 				return
 			}
@@ -207,7 +239,7 @@ func (c *Connection) readData(identifier uint16, size uint16) {
 			return
 		}
 
-		e, err := icmp.ReadEchoIdentifier(s, c.Address, identifier)
+		e, err := icmp.ReadEchoIdentifier(s, c.Dst, identifier)
 		if err != nil {
 			c.Close()
 			return
@@ -231,7 +263,7 @@ func (c *Connection) readData(identifier uint16, size uint16) {
 			Sequence:   e.Sequence,
 			Data:       reply,
 		}
-		err = er.SendEcho(c.Address)
+		err = er.SendEcho(c.Src, c.Dst)
 		if err != nil {
 			c.Close()
 			return
